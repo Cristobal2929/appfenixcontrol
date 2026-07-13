@@ -271,11 +271,38 @@ class MainActivity : AppCompatActivity() {
             return true
         }
 
+        // CLICK POR TEXTO: "pulsa en Buscar" / "toca Aceptar" (no coordenadas)
+        val clickTextRegex = Regex("""(?:pulsa\s+en\s+|clic\s+en\s+|toca\s+(?:en\s+)?|dale\s+a\s+)(?!\d+\s*,)(.+)""", RegexOption.IGNORE_CASE)
+        clickTextRegex.find(texto)?.let { m ->
+            if (!requireService()) return true
+            val etiqueta = m.groupValues[1].trim()
+            if (service!!.clickByText(etiqueta)) {
+                addMessage("👆 Pulsado en \"$etiqueta\"", false)
+            } else {
+                addMessage("No encontré \"$etiqueta\" en la pantalla.", false)
+            }
+            return true
+        }
+
+        // BUSCAR: "busca gatos" → escribe en la caja de búsqueda y pulsa Enter
+        val searchRegex = Regex("""busca[r]?\s+(.+)""", RegexOption.IGNORE_CASE)
+        searchRegex.find(texto)?.let { m ->
+            if (!requireService()) return true
+            val consulta = m.groupValues[1].trim()
+            if (service!!.writeInFirstField(consulta)) {
+                // pequeña espera y pulsar "Intro" del teclado
+                binding.root.postDelayed({
+                    service!!.pressEnter()
+                }, 400)
+                addMessage("🔍 Buscando \"$consulta\"...", false)
+            } else {
+                addMessage("No encontré una caja de búsqueda en la pantalla.", false)
+            }
+            return true
+        }
+
         return false
     }
-
-    /**
-     * Abre una app por su nombre común. Primero mira una lista de apps
      * conocidas (WhatsApp, cámara...) y si no, busca cualquier app instalada
      * cuyo nombre contenga lo que pidió el usuario.
      */

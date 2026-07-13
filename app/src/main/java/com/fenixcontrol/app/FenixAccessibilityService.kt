@@ -96,6 +96,59 @@ class FenixAccessibilityService : AccessibilityService() {
         dispatchGesture(gesture, null, null)
     }
 
+    /**
+     * Busca en la pantalla un elemento cuyo texto contenga `texto` y lo pulsa,
+     * esté donde esté. Mucho más fiable que las coordenadas fijas: sirve para
+     * "pulsa en Buscar", "pulsa en Aceptar", tocar un resultado, etc.
+     * Devuelve true si encontró algo que pulsar.
+     */
+    fun clickByText(texto: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val objetivo = texto.trim().lowercase()
+        val nodo = buscarNodoClicable(root, objetivo) ?: return false
+        // Si el nodo en sí no es clicable, subimos al primer padre que lo sea
+        var actual: AccessibilityNodeInfo? = nodo
+        while (actual != null && !actual.isClickable) actual = actual.parent
+        return (actual ?: nodo).performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
+    private fun buscarNodoClicable(node: AccessibilityNodeInfo?, objetivo: String): AccessibilityNodeInfo? {
+        if (node == null) return null
+        val t = node.text?.toString()?.lowercase() ?: ""
+        val d = node.contentDescription?.toString()?.lowercase() ?: ""
+        if (t.contains(objetivo) || d.contains(objetivo)) return node
+        for (i in 0 until node.childCount) {
+            val r = buscarNodoClicable(node.getChild(i), objetivo)
+            if (r != null) return r
+        }
+        return null
+    }
+
+    /**
+     * Enfoca el primer campo de texto editable de la pantalla y escribe.
+     * Útil para buscadores: "abre Google y busca gatos" necesita meter el
+     * texto en la caja de búsqueda aunque no esté enfocada aún.
+     */
+    fun writeInFirstField(text: String): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val campo = buscarEditable(root) ?: return false
+        campo.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
+        }
+        return campo.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    private fun buscarEditable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val r = buscarEditable(node.getChild(i))
+            if (r != null) return r
+        }
+        return null
+    }
+
     /** Escribe texto en el campo que tenga el foco de entrada. */
     fun inputText(text: String) {
         val node = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
@@ -123,5 +176,20 @@ class FenixAccessibilityService : AccessibilityService() {
             if (r != null) return r
         }
         return null
+    }
+
+    /**
+     * Confirma la búsqueda en el campo editable (equivale a pulsar Intro).
+     * Muchos buscadores aceptan la acción IME de "buscar" sobre el campo.
+     */
+    fun pressEnter(): Boolean {
+        val root = rootInActiveWindow ?: return false
+        val campo = buscarEditable(root) ?: return false
+        // ACTION_IME_ENTER (API 30+) o, si no, la acción de "siguiente/buscar"
+        return if (android.os.Build.VERSION.SDK_INT >= 30) {
+            campo.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER.id)
+        } else {
+            campo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
     }
 }
