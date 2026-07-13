@@ -5,10 +5,12 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.provider.Settings
+import android.speech.RecognizerIntent
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -32,6 +34,32 @@ class MainActivity : AppCompatActivity() {
     private val client = OkHttpClient()
     private val prefs: SharedPreferences by lazy {
         getSharedPreferences("fenix_prefs", Context.MODE_PRIVATE)
+    }
+
+    // Lanzador del reconocimiento de voz de Android. Al terminar, mete lo
+    // dictado como si el usuario lo hubiera escrito y lo procesa.
+    private val voiceLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val textos = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+        val dicho = textos?.firstOrNull()?.trim()
+        if (!dicho.isNullOrEmpty()) {
+            addMessage(dicho, true)
+            sendMessageToAI(dicho)
+        }
+    }
+
+    private fun escucharVoz() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Habla ahora...")
+        }
+        try {
+            voiceLauncher.launch(intent)
+        } catch (e: Exception) {
+            addMessage("Este móvil no tiene reconocimiento de voz disponible.", false)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,11 +90,17 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
+        binding.buttonVoice.setOnClickListener {
+            escucharVoz()
+        }
+
         // Mensaje de bienvenida con instrucciones
         addMessage(
             "Soy Fénix. Configura tu clave de Cerebras en Ajustes ⚙️ y activa el " +
-            "control de pantalla con el botón de accesibilidad. Luego pídeme cosas " +
-            "como: leer pantalla, pulsa en 500,800, escribe hola, o desliza.",
+            "control de pantalla con el botón 🖐. Puedes hablarme con el botón 🎤. " +
+            "Sé hacer: abrir apps (\"abre WhatsApp\"), leer pantalla, pulsar (\"pulsa " +
+            "en 500,800\"), escribir (\"escribe hola\"), deslizar, y responder tus " +
+            "preguntas como asistente.",
             false
         )
     }
@@ -224,6 +258,70 @@ class MainActivity : AppCompatActivity() {
             return true
         }
 
+        // ABRIR APP  o  "abre X" / "abrir X"  (no necesita accesibilidad)
+        val openRegex = Regex("""(?:open:|abre\s+(?:el\s+|la\s+)?|abrir\s+(?:el\s+|la\s+)?)(.+)""", RegexOption.IGNORE_CASE)
+        openRegex.find(texto)?.let { m ->
+            val nombreApp = m.groupValues[1].trim()
+            if (abrirApp(nombreApp)) {
+                addMessage("📲 Abriendo $nombreApp...", false)
+            } else {
+                addMessage("No encontré la app \"$nombreApp\" instalada.", false)
+            }
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * Abre una app por su nombre común. Primero mira una lista de apps
+     * conocidas (WhatsApp, cámara...) y si no, busca cualquier app instalada
+     * cuyo nombre contenga lo que pidió el usuario.
+     */
+    private fun abrirApp(nombre: String): Boolean {
+        val n = nombre.lowercase()
+        // Paquetes de apps muy comunes
+        val conocidas = mapOf(
+            "whatsapp" to "com.whatsapp",
+            "telegram" to "org.telegram.messenger",
+            "instagram" to "com.instagram.android",
+            "youtube" to "com.google.android.youtube",
+            "chrome" to "com.android.chrome",
+            "gmail" to "com.google.android.gm",
+            "camara" to "android.media.action.IMAGE_CAPTURE",
+            "cámara" to "android.media.action.IMAGE_CAPTURE",
+            "ajustes" to "android.settings.SETTINGS",
+            "youtube music" to "com.google.android.apps.youtube.music"
+        )
+
+        // Caso especial: cámara y ajustes se abren por acción del sistema
+        if (n.contains("camara") || n.contains("cámara")) {
+            return try {
+                startActivity(android.content.Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE))
+                true
+            } catch (e: Exception) { false }
+        }
+        if (n.contains("ajustes") || n.contains("configuracion") || n.contains("configuración")) {
+            startActivity(android.content.Intent(android.provider.Settings.ACTION_SETTINGS)); return true
+        }
+
+        // Busca en la lista de conocidas
+        val pkgConocido = conocidas.entries.firstOrNull { n.contains(it.key) }?.value
+        if (pkgConocido != null) {
+            val intent = packageManager.getLaunchIntentForPackage(pkgConocido)
+            if (intent != null) { startActivity(intent); return true }
+        }
+
+        // Si no, busca cualquier app instalada cuyo nombre visible contenga el texto
+        val pm = packageManager
+        val apps = pm.getInstalledApplications(0)
+        for (app in apps) {
+            val etiqueta = pm.getApplicationLabel(app).toString().lowercase()
+            if (etiqueta.contains(n)) {
+                val intent = pm.getLaunchIntentForPackage(app.packageName)
+                if (intent != null) { startActivity(intent); return true }
+            }
+        }
         return false
     }
 
