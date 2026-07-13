@@ -185,9 +185,11 @@ class FenixAccessibilityService : AccessibilityService() {
     fun pressEnter(): Boolean {
         val root = rootInActiveWindow ?: return false
         val campo = buscarEditable(root) ?: return false
-        // ACTION_IME_ENTER (API 30+) o, si no, la acción de "siguiente/buscar"
+        // ACTION_IME_ENTER existe desde API 30; usamos su valor por id de forma segura.
         return if (android.os.Build.VERSION.SDK_INT >= 30) {
-            campo.performAction(AccessibilityNodeInfo.ACTION_IME_ENTER.id)
+            campo.performAction(
+                AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
+            )
         } else {
             campo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         }
