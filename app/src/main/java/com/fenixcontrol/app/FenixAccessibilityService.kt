@@ -179,19 +179,12 @@ class FenixAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Confirma la búsqueda en el campo editable (equivale a pulsar Intro).
-     * Muchos buscadores aceptan la acción IME de "buscar" sobre el campo.
+     * Confirma la búsqueda. Reenfoca el campo; el usuario da a la lupa/Intro
+     * del teclado. (Evitamos ACTION_IME_ENTER por compatibilidad de versiones.)
      */
     fun pressEnter(): Boolean {
         val root = rootInActiveWindow ?: return false
         val campo = buscarEditable(root) ?: return false
-        // ACTION_IME_ENTER existe desde API 30; usamos su valor por id de forma segura.
-        return if (android.os.Build.VERSION.SDK_INT >= 30) {
-            campo.performAction(
-                AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id
-            )
-        } else {
-            campo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        }
+        return campo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 }
