@@ -1,7 +1,7 @@
-**
 package com.fenixcontrol.app
 
 import okhttp3.MediaType
+import okhttp3.RequestBody
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
@@ -18,7 +18,6 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.Gravity
-import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityEvent
@@ -28,7 +27,6 @@ import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.constraintlayout.widget.ConstraintLayout
-import androidx.core.view.setPadding
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
@@ -39,9 +37,8 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -182,7 +179,8 @@ class MainActivity : AppCompatActivity() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): MessageViewHolder {
             val textView = TextView(parent.context).apply {
                 id = android.R.id.text1
-                setPadding(16)
+                // setPadding(16) replaced with explicit padding values
+                setPadding(16, 16, 16, 16)
                 setTextColor(Color.WHITE)
                 textSize = 16f
                 maxWidth = 600
@@ -356,5 +354,3 @@ class MainActivity : AppCompatActivity() {
         }
     }
 }
-
-**
