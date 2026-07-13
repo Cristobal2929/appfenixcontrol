@@ -20,11 +20,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: '8.2'
+          gradle-version: '8.5'
 
       - name: Build APK (debug)
-        run: gradle assembleDebug --no-daemon
-        working-directory: .
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
