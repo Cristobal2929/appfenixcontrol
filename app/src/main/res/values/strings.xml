@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">AppFenixcontrol</string>
-    <string name="hint_message">Escribe tu mensaje...</string>
-    <string name="send">Enviar</string>
-    <string name="settings">Ajustes</string>
-    <string name="hint_api_key">Clave API de Cerebras</string>
-    <string name="save">Guardar</string>
-</resources>
