@@ -1,3 +1,4 @@
+**
 package com.fenixcontrol.app
 
 import okhttp3.MediaType
@@ -33,20 +34,21 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import com.fenixcontrol.app.databinding.ActivityMainBinding
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.Response
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -94,32 +96,32 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val json = JSONObject()
-        json.put("model", "cerebras/Cerebras-GPT-13B")
-        val messagesArray = JSONArray()
-        // Add previous messages
-        for (msg in messages) {
-            val obj = JSONObject()
-            obj.put("role", if (msg.isUser) "user" else "assistant")
-            obj.put("content", msg.text)
-            messagesArray.put(obj)
+        val json = JSONObject().apply {
+            put("model", "cerebras/Cerebras-GPT-13B")
+            val messagesArray = JSONArray()
+            // Add previous messages
+            for (msg in messages) {
+                val obj = JSONObject()
+                obj.put("role", if (msg.isUser) "user" else "assistant")
+                obj.put("content", msg.text)
+                messagesArray.put(obj)
+            }
+            // Add current user message
+            val current = JSONObject()
+            current.put("role", "user")
+            current.put("content", userMessage)
+            messagesArray.put(current)
+
+            put("messages", messagesArray)
         }
-        // Add current user message
-        val current = JSONObject()
-        current.put("role", "user")
-        current.put("content", userMessage)
-        messagesArray.put(current)
 
-        json.put("messages", messagesArray)
+        val requestBody = json.toString()
+            .toRequestBody("application/json".toMediaTypeOrNull())
 
-        val body = RequestBody.create(
-            "application/json".toMediaTypeOrNull(),
-            json.toString()
-        )
         val request = Request.Builder()
             .url("https://api.cerebras.ai/v1/chat/completions")
             .addHeader("Authorization", "Bearer $apiKey")
-            .post(body)
+            .post(requestBody)
             .build()
 
         CoroutineScope(Dispatchers.IO).launch {
@@ -338,7 +340,12 @@ class MainActivity : AppCompatActivity() {
         // Input text into focused node
         fun inputText(text: String) {
             val node = rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
-            val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
+            val args = Bundle().apply {
+                putCharSequence(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    text
+                )
+            }
             node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         }
 
@@ -349,3 +356,5 @@ class MainActivity : AppCompatActivity() {
         }
     }
 }
+
+**
