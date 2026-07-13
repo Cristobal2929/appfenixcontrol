@@ -3,8 +3,10 @@ package com.fenixcontrol.app
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.accessibilityservice.GestureDescription.StrokeDescription
+import android.content.Intent
 import android.graphics.Path
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -31,6 +33,33 @@ class FenixAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         // No hace falta procesar eventos en continuo para este uso.
+    }
+
+    // --- Detección de doble pulsación de SUBIR VOLUMEN ---
+    private var ultimaPulsacionVol = 0L
+
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        if (event == null) return super.onKeyEvent(event)
+        // Solo reaccionamos al soltar la tecla de subir volumen
+        if (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP && event.action == KeyEvent.ACTION_UP) {
+            val ahora = System.currentTimeMillis()
+            if (ahora - ultimaPulsacionVol < 500) {
+                // Doble pulsación detectada (menos de medio segundo entre las dos)
+                ultimaPulsacionVol = 0L
+                abrirEscuchaVoz()
+                return true  // consumimos el evento: no cambia el volumen en la 2ª
+            }
+            ultimaPulsacionVol = ahora
+        }
+        return super.onKeyEvent(event)
+    }
+
+    /** Abre la actividad de escucha por voz de Fénix por encima de todo. */
+    private fun abrirEscuchaVoz() {
+        val intent = Intent(this, VoiceActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
     }
 
     override fun onInterrupt() {

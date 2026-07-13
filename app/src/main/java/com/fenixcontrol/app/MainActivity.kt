@@ -98,9 +98,10 @@ class MainActivity : AppCompatActivity() {
         addMessage(
             "Soy Fénix. Configura tu clave de Cerebras en Ajustes ⚙️ y activa el " +
             "control de pantalla con el botón 🖐. Puedes hablarme con el botón 🎤. " +
-            "Sé hacer: abrir apps (\"abre WhatsApp\"), leer pantalla, pulsar (\"pulsa " +
-            "en 500,800\"), escribir (\"escribe hola\"), deslizar, y responder tus " +
-            "preguntas como asistente.",
+            "✨ Nuevo: con DOBLE PULSACIÓN de SUBIR VOLUMEN me abres estés donde " +
+            "estés y me hablas (\"lee\", \"responde hola\", \"abre WhatsApp\", " +
+            "\"desliza\"). Sé hacer: abrir apps, leer pantalla, pulsar, escribir, " +
+            "deslizar, y responder tus preguntas.",
             false
         )
     }
