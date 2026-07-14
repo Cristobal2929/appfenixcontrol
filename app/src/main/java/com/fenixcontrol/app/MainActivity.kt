@@ -3,6 +3,8 @@ package com.fenixcontrol.app
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.RecognizerIntent
@@ -39,6 +41,18 @@ class MainActivity : AppCompatActivity() {
         getSharedPreferences("fenix_prefs", Context.MODE_PRIVATE)
     }
 
+    // Vuelve aquí cuando el usuario sale de la pantalla de "Mostrar sobre
+    // otras apps". Si ya dio el permiso, encendemos la burbuja.
+    private val overlayPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (Settings.canDrawOverlays(this)) {
+            encenderBurbuja()
+        } else {
+            addMessage("Necesito el permiso \"Mostrar sobre otras apps\" para poder poner la burbuja.", false)
+        }
+    }
+
     // Lanzador del reconocimiento de voz de Android. Al terminar, mete lo
     // dictado como si el usuario lo hubiera escrito y lo procesa.
         private val voiceLauncher = registerForActivityResult(
@@ -65,6 +79,34 @@ class MainActivity : AppCompatActivity() {
             binding.editTextMessage.text?.clear()
             sendMessageToAI(texto)
         }
+    /** Pide el permiso de superposición si falta, y si ya está, enciende la burbuja. */
+    private fun pedirPermisoYEncenderBurbuja() {
+        if (Settings.canDrawOverlays(this)) {
+            encenderBurbuja()
+        } else {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            overlayPermissionLauncher.launch(intent)
+        }
+    }
+
+    private fun encenderBurbuja() {
+        val intent = Intent(this, BotonFlotanteService::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+        binding.buttonBurbuja.text = "🛑"
+    }
+
+    private fun apagarBurbuja() {
+        stopService(Intent(this, BotonFlotanteService::class.java))
+        binding.buttonBurbuja.text = "🔥"
+    }
+
     private fun escucharVoz() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -117,6 +159,14 @@ class MainActivity : AppCompatActivity() {
 
         binding.buttonVoice.setOnClickListener {
             escucharVoz()
+        }
+
+        binding.buttonBurbuja.setOnClickListener {
+            if (BotonFlotanteService.activo) {
+                apagarBurbuja()
+            } else {
+                pedirPermisoYEncenderBurbuja()
+            }
         }
 
         binding.buttonEncuesta.setOnClickListener {
@@ -202,6 +252,7 @@ class MainActivity : AppCompatActivity() {
         // Por si el modo encuestas se activó o paró por voz mientras el chat
         // no estaba en primer plano, sincronizamos el texto del botón.
         binding.buttonEncuesta.text = if (EncuestaManager.estaActivo()) "⏹" else "📋"
+        binding.buttonBurbuja.text = if (BotonFlotanteService.activo) "🛑" else "🔥"
     }
 
     override fun onDestroy() {
