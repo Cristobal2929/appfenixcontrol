@@ -303,10 +303,7 @@ class MainActivity : AppCompatActivity() {
 
         return false
     }
-     * conocidas (WhatsApp, cámara...) y si no, busca cualquier app instalada
-     * cuyo nombre contenga lo que pidió el usuario.
-     */
-    private fun abrirApp(nombre: String): Boolean {
+     rivate fun abrirApp(nombre: String): Boolean {
         val n = nombre.lowercase()
         // Paquetes de apps muy comunes
         val conocidas = mapOf(
