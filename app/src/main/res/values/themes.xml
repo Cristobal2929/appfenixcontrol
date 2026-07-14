@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.AppFenix" parent="Theme.MaterialComponents.DayNight.DarkActionBar"/>
+
+    <!-- Tema translúcido para VoiceActivity: se ve encima de cualquier app
+         sin ocupar toda la pantalla ni mostrar barra de acción. -->
+    <style name="Theme.AppFenix.Transparent" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

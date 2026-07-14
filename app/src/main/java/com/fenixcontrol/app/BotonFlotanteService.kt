@@ -150,7 +150,15 @@ class BotonFlotanteService : Service() {
         val intent = Intent(this, VoiceActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        startActivity(intent)
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(
+                this,
+                "No se pudo abrir el micrófono: ${e.message}",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     private fun arrancarEnPrimerPlano() {
