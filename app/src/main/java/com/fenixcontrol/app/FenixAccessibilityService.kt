@@ -187,4 +187,66 @@ class FenixAccessibilityService : AccessibilityService() {
         val campo = buscarEditable(root) ?: return false
         return campo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
+
+    // =====================================================================
+    // MODO ENCUESTAS: enumera los elementos interactivos de la pantalla
+    // (botones, radios, checkboxes, campos) para que el agente pueda elegir
+    // uno por número en vez de por coordenadas o texto exacto.
+    // =====================================================================
+
+    data class ElementoUI(
+        val indice: Int,
+        val tipo: String,      // "campo", "casilla", "marcado", "boton"
+        val texto: String,
+        val seleccionado: Boolean
+    )
+
+    // Guarda la referencia real a cada nodo listado, para poder pulsarlo
+    // después por su número. Se sustituye cada vez que se vuelve a listar.
+    private var ultimosElementos: MutableList<AccessibilityNodeInfo> = mutableListOf()
+
+    /** Lista los elementos con los que se puede interactuar en la pantalla actual. */
+    fun listarElementosInteractivos(): List<ElementoUI> {
+        ultimosElementos = mutableListOf()
+        val root = rootInActiveWindow ?: return emptyList()
+        val resultado = mutableListOf<ElementoUI>()
+
+        fun recorrer(node: AccessibilityNodeInfo?) {
+            if (node == null) return
+            val interactivo = node.isClickable || node.isCheckable || node.isEditable
+            if (interactivo) {
+                val texto = (node.text?.toString() ?: node.contentDescription?.toString() ?: "")
+                    .trim().take(80)
+                if (texto.isNotBlank() || node.isCheckable || node.isEditable) {
+                    val tipo = when {
+                        node.isEditable -> "campo"
+                        node.isCheckable -> if (node.isChecked) "marcado" else "casilla"
+                        else -> "boton"
+                    }
+                    val idx = ultimosElementos.size
+                    ultimosElementos.add(node)
+                    resultado.add(ElementoUI(idx, tipo, texto, node.isChecked))
+                }
+            }
+            for (i in 0 until node.childCount) recorrer(node.getChild(i))
+        }
+        recorrer(root)
+        return resultado
+    }
+
+    /** Pulsa el elemento nº `indice` de la última lista obtenida con listarElementosInteractivos(). */
+    fun pulsarElementoPorIndice(indice: Int): Boolean {
+        val nodo = ultimosElementos.getOrNull(indice) ?: return false
+        return nodo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
+    /** Escribe texto en el elemento nº `indice` (debe ser un campo editable). */
+    fun escribirEnElementoPorIndice(indice: Int, texto: String): Boolean {
+        val nodo = ultimosElementos.getOrNull(indice) ?: return false
+        nodo.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        val args = Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, texto)
+        }
+        return nodo.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
 }

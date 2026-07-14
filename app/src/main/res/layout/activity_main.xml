@@ -32,6 +32,12 @@
             android:text="🖐"/>
 
         <Button
+            android:id="@+id/buttonEncuesta"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📋"/>
+
+        <Button
             android:id="@+id/buttonSettings"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

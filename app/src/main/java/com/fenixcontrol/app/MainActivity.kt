@@ -6,11 +6,14 @@ import android.content.SharedPreferences
 import android.os.Bundle
 import android.provider.Settings
 import android.speech.RecognizerIntent
+import android.text.InputType
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -35,6 +38,9 @@ class MainActivity : AppCompatActivity() {
     private val prefs: SharedPreferences by lazy {
         getSharedPreferences("fenix_prefs", Context.MODE_PRIVATE)
     }
+
+    // Agente autónomo de "modo encuestas" (null cuando no está activo).
+    private var encuestaAgent: EncuestaAgent? = null
 
     // Lanzador del reconocimiento de voz de Android. Al terminar, mete lo
     // dictado como si el usuario lo hubiera escrito y lo procesa.
@@ -102,6 +108,14 @@ class MainActivity : AppCompatActivity() {
             escucharVoz()
         }
 
+        binding.buttonEncuesta.setOnClickListener {
+            if (encuestaAgent?.estaActivo() == true) {
+                encuestaAgent?.detener()
+            } else {
+                mostrarDialogoEncuesta()
+            }
+        }
+
         // Mensaje de bienvenida con instrucciones
         addMessage(
             "Soy Fénix. Configura tu clave de Cerebras en Ajustes ⚙️ y activa el " +
@@ -109,9 +123,80 @@ class MainActivity : AppCompatActivity() {
             "✨ Nuevo: con DOBLE PULSACIÓN de SUBIR VOLUMEN me abres estés donde " +
             "estés y me hablas (\"lee\", \"responde hola\", \"abre WhatsApp\", " +
             "\"desliza\"). Sé hacer: abrir apps, leer pantalla, pulsar, escribir, " +
-            "deslizar, y responder tus preguntas.",
+            "deslizar, y responder tus preguntas. 📋 Con el botón de encuestas " +
+            "puedo rellenar solo, paso a paso, una encuesta que tengas abierta " +
+            "en pantalla, según el perfil que me des; se puede parar en cualquier momento.",
             false
         )
+    }
+
+    /**
+     * Pide al usuario el perfil de respuesta (edad, país, opiniones...) y,
+     * con eso, arranca el agente autónomo de modo encuestas sobre la app que
+     * tenga abierta delante en ese momento.
+     */
+    private fun mostrarDialogoEncuesta() {
+        val apiKey = prefs.getString("api_key", null)
+        if (apiKey.isNullOrEmpty()) {
+            addMessage("Error: configura tu clave de Cerebras en Ajustes ⚙️.", false)
+            return
+        }
+        if (FenixAccessibilityService.instance == null) {
+            addMessage(
+                "El control de pantalla no está activo. Pulsa el botón de " +
+                "accesibilidad y actívalo en Ajustes de Android.", false
+            )
+            return
+        }
+
+        val input = EditText(this).apply {
+            hint = getString(R.string.hint_perfil_encuesta)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setText(prefs.getString("perfil_encuesta", ""))
+            setPadding(48, 32, 48, 32)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(getString(R.string.iniciar_encuesta))
+            .setMessage(
+                "Abre primero la encuesta en su app o navegador, deja esta ventana " +
+                "encima y describe cómo debo responder (ej: \"Hombre, 34 años, " +
+                "España, freelance, opiniones neutras y positivas sobre marcas\")."
+            )
+            .setView(input)
+            .setPositiveButton(getString(R.string.iniciar_encuesta)) { _, _ ->
+                val perfil = input.text?.toString()?.trim().orEmpty()
+                if (perfil.isEmpty()) {
+                    addMessage("Necesito un perfil de respuesta para empezar.", false)
+                    return@setPositiveButton
+                }
+                prefs.edit().putString("perfil_encuesta", perfil).apply()
+                iniciarModoEncuesta(apiKey, perfil)
+            }
+            .setNegativeButton(getString(R.string.detener_encuesta), null)
+            .show()
+    }
+
+    private fun iniciarModoEncuesta(apiKey: String, perfil: String) {
+        binding.buttonEncuesta.text = "⏹"
+        encuestaAgent = EncuestaAgent(
+            client = client,
+            apiKey = apiKey,
+            perfil = perfil,
+            onLog = { texto -> runOnUiThread { addMessage(texto, false) } },
+            onFin = { texto ->
+                runOnUiThread {
+                    addMessage(texto, false)
+                    binding.buttonEncuesta.text = "📋"
+                    encuestaAgent = null
+                }
+            }
+        ).also { it.iniciar() }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        encuestaAgent?.detener("Actividad cerrada.")
     }
 
     private fun addMessage(text: String, isUser: Boolean) {
