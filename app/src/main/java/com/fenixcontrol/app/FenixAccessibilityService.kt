@@ -240,6 +240,21 @@ class FenixAccessibilityService : AccessibilityService() {
         return nodo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
+    /**
+     * Pulsa varios elementos de golpe (por sus números), en el orden dado.
+     * Se usa en preguntas de "elige todas las que apliquen": el agente puede
+     * marcar todas las casillas necesarias en un solo paso en vez de una a
+     * una. Devuelve cuántas se marcaron con éxito.
+     */
+    fun pulsarVariosElementosPorIndice(indices: List<Int>): Int {
+        var ok = 0
+        for (i in indices) {
+            val nodo = ultimosElementos.getOrNull(i) ?: continue
+            if (nodo.performAction(AccessibilityNodeInfo.ACTION_CLICK)) ok++
+        }
+        return ok
+    }
+
     /** Escribe texto en el elemento nº `indice` (debe ser un campo editable). */
     fun escribirEnElementoPorIndice(indice: Int, texto: String): Boolean {
         val nodo = ultimosElementos.getOrNull(indice) ?: return false

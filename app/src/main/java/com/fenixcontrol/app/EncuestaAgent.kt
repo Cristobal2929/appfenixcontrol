@@ -79,13 +79,27 @@ class EncuestaAgent(
         val elementos = service.listarElementosInteractivos()
         val textoPantalla = service.readScreenContent()
 
-        val listado = if (elementos.isEmpty()) {
-            "(no se detectaron elementos interactivos; puede que la pantalla solo tenga texto o haya que desplazar)"
-        } else {
-            elementos.joinToString("\n") { e ->
-                val marca = if (e.tipo == "marcado") " [ya marcado]" else ""
-                "${e.indice}: (${e.tipo}) ${e.texto}$marca"
-            }
+        // Si no hay nada con qué interactuar, no gastamos una llamada a la IA
+        // preguntando qué hacer: desplazamos directamente. Así la encuesta
+        // nunca se queda "colgada" esperando una decisión sobre una pantalla
+        // vacía o a medio cargar.
+        if (elementos.isEmpty()) {
+            service.scrollForward()
+            onLog("↕️ Sin elementos visibles, desplazando para buscar más...")
+            if (activo) handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
+            return
+        }
+
+        val palabrasContinuar = listOf(
+            "continuar", "siguiente", "next", "enviar", "submit", "finalizar",
+            "aceptar", "confirmar", "enviar respuestas", "terminar"
+        )
+        val listado = elementos.joinToString("\n") { e ->
+            val marca = if (e.tipo == "marcado") " [ya marcado]" else ""
+            val esContinuar = e.tipo == "boton" &&
+                palabrasContinuar.any { e.texto.lowercase().contains(it) }
+            val etiqueta = if (esContinuar) " 👉[botón para avanzar de página]" else ""
+            "${e.indice}: (${e.tipo}) ${e.texto}$marca$etiqueta"
         }
 
         pedirSiguienteAccion(textoPantalla, listado) { accion ->
@@ -111,16 +125,33 @@ class EncuestaAgent(
 
             En cada turno te doy el texto visible de la pantalla y una lista numerada
             de elementos con los que puedes interactuar (botones, casillas, radios,
-            campos de texto). Responde SOLO con UNA de estas órdenes exactas, sin nada
-            más de texto:
-              MARCAR:<numero>            -> pulsa/marca el elemento con ese número
-              ESCRIBIR:<numero>:<texto>  -> escribe <texto> en el campo con ese número
-              DESPLAZAR                  -> baja la pantalla para ver más opciones
-              FIN:<motivo corto>         -> la encuesta ha terminado o no puedes continuar
+            campos de texto). Los elementos marcados con 👉 son botones para avanzar
+            de página (Continuar/Siguiente/Enviar). Responde SOLO con UNA de estas
+            órdenes exactas, sin nada más de texto:
+              MARCAR:<numero>              -> pulsa/marca un único elemento
+              MARCAR:<n1>,<n2>,<n3>        -> pulsa/marca varios elementos a la vez
+              ESCRIBIR:<numero>:<texto>    -> escribe <texto> en el campo con ese número
+              DESPLAZAR                    -> baja la pantalla para ver más opciones
+              FIN:<motivo corto>           -> la encuesta ha terminado de verdad (pantalla
+                                               de agradecimiento/confirmación final)
 
-            Reglas: elige solo números que existan en la lista. Si una pregunta no
-            está en el perfil, responde con la opción más neutral/razonable. Nunca
-            reveles datos personales reales del usuario, solo el perfil dado.
+            Reglas MUY IMPORTANTES:
+            1. SIEMPRE debes elegir una respuesta y avanzar; nunca te quedes sin hacer
+               nada. Si una pregunta no está cubierta en el perfil, elige la opción más
+               neutral/razonable y sigue adelante. No pares a "pensar".
+            2. Si la pregunta permite elegir varias opciones (checkboxes, "selecciona
+               todas las que apliquen"), marca en el MISMO turno TODAS las opciones que
+               correspondan al perfil usando MARCAR:<n1>,<n2>,<n3> antes de avanzar de
+               página. No avances con la pregunta a medio responder.
+            3. Cuando ya hayas respondido todo lo visible en la pantalla, busca el
+               elemento marcado con 👉 y púlsalo (MARCAR:<numero>) para pasar a la
+               siguiente página. Si no ves ningún 👉 ni preguntas nuevas, usa DESPLAZAR
+               antes de rendirte.
+            4. Solo responde FIN si el texto de la pantalla indica claramente que la
+               encuesta ya se completó (agradecimiento, confirmación de envío, etc.).
+               No respondas FIN solo porque una pregunta te resulte difícil.
+            5. Elige solo números que existan en la lista. Nunca reveles datos
+               personales reales del usuario, solo el perfil dado.
         """.trimIndent()
 
         val user = "TEXTO DE LA PANTALLA:\n$textoPantalla\n\nELEMENTOS:\n$listado"
@@ -179,10 +210,17 @@ class EncuestaAgent(
             return
         }
 
-        Regex("""MARCAR:\s*(\d+)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
-            val idx = m.groupValues[1].toInt()
-            val ok = service.pulsarElementoPorIndice(idx)
-            onLog(if (ok) "☑️ Marcado elemento $idx" else "⚠️ No pude marcar el elemento $idx")
+        Regex("""MARCAR:\s*([\d,\s]+)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
+            val indices = m.groupValues[1].split(",")
+                .mapNotNull { it.trim().toIntOrNull() }
+            if (indices.size <= 1) {
+                val idx = indices.firstOrNull() ?: return
+                val ok = service.pulsarElementoPorIndice(idx)
+                onLog(if (ok) "☑️ Marcado elemento $idx" else "⚠️ No pude marcar el elemento $idx")
+            } else {
+                val ok = service.pulsarVariosElementosPorIndice(indices)
+                onLog("☑️ Marcados $ok de ${indices.size} elementos: ${indices.joinToString()}")
+            }
             return
         }
 

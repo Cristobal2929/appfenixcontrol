@@ -245,6 +245,13 @@ class MainActivity : AppCompatActivity() {
     private fun iniciarModoEncuesta(apiKey: String, perfil: String) {
         binding.buttonEncuesta.text = "⏹"
         EncuestaManager.iniciar(this, apiKey, perfil)
+        // Importante: el agente actúa sobre la app que esté delante. Si nos
+        // quedamos aquí abiertos, tapamos la encuesta y no se ve nada avanzar.
+        // Mandamos Fénix a segundo plano automáticamente para que reaparezca
+        // la encuesta (la tarea anterior en la pila) y el agente trabaje sobre
+        // ella sin que el usuario tenga que cambiar de app a mano.
+        addMessage("📋 Modo encuestas iniciado. Vuelvo a segundo plano...", false)
+        binding.root.postDelayed({ moveTaskToBack(true) }, 400)
     }
 
     override fun onResume() {
