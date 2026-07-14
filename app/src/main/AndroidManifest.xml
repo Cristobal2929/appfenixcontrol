@@ -22,12 +22,6 @@
             android:name=".SettingsActivity"
             android:exported="false"/>
 
-        <activity
-            android:name=".VoiceActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:excludeFromRecents="true"/>
-
         <!-- Servicio de accesibilidad: es lo que da el control de pantalla.
              El usuario debe activarlo a mano en Ajustes > Accesibilidad. -->
         <service
