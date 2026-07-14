@@ -303,7 +303,7 @@ class MainActivity : AppCompatActivity() {
 
         return false
     }
-     rivate fun abrirApp(nombre: String): Boolean {
+     private fun abrirApp(nombre: String): Boolean {
         val n = nombre.lowercase()
         // Paquetes de apps muy comunes
         val conocidas = mapOf(
