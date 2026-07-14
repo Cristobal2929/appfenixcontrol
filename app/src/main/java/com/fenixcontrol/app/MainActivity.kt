@@ -38,17 +38,27 @@ class MainActivity : AppCompatActivity() {
 
     // Lanzador del reconocimiento de voz de Android. Al terminar, mete lo
     // dictado como si el usuario lo hubiera escrito y lo procesa.
-    private val voiceLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val textos = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-        val dicho = textos?.firstOrNull()?.trim()
-        if (!dicho.isNullOrEmpty()) {
-            addMessage(dicho, true)
-            sendMessageToAI(dicho)
+        private val voiceLauncher = registerForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+            if (result.resultCode == RESULT_OK) {
+                val textos = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                val dicho = textos?.firstOrNull()?.trim()
+                if (!dicho.isNullOrEmpty()) {
+                    binding.editTextMessage.setText(dicho)
+                    binding.editTextMessage.setSelection(dicho.length)
+                    enviarMensaje(dicho)
+                }
+            } else {
+                Log.w("Voz", "Reconocimiento de voz cancelado o sin resultado (resultCode=${result.resultCode})")
+            }
         }
-    }
 
+        private fun enviarMensaje(texto: String) {
+            addMessage(texto, true)
+            binding.editTextMessage.text?.clear()
+            sendMessageToAI(texto)
+        }
     private fun escucharVoz() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
@@ -74,9 +84,7 @@ class MainActivity : AppCompatActivity() {
         binding.buttonSend.setOnClickListener {
             val text = binding.editTextMessage.text?.toString()?.trim()
             if (!text.isNullOrEmpty()) {
-                addMessage(text, true)
-                binding.editTextMessage.text?.clear()
-                sendMessageToAI(text)
+                enviarMensaje(text)    
             }
         }
 
