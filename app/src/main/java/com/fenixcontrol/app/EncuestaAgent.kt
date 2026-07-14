@@ -46,13 +46,20 @@ class EncuestaAgent(
     private var pasos = 0
     private var activo = false
 
+    // Reintentos consecutivos del PASO ACTUAL (red/servidor/parseo). No paran
+    // el modo encuestas: solo evitan martillar la API en bucle cerrado sin
+    // pausa cuando algo falla varias veces seguidas.
+    private var reintentosPasoActual = 0
+    private val MAX_REINTENTOS_ANTES_DE_DESPLAZAR = 3
+
     fun estaActivo(): Boolean = activo
 
     fun iniciar() {
         if (activo) return
         activo = true
         pasos = 0
-        onLog("📋 Modo encuestas iniciado. Máximo $MAX_PASOS pasos, se puede detener en cualquier momento.")
+        reintentosPasoActual = 0
+        onLog("📋 Modo encuestas iniciado. No se detendrá solo: sigue hasta $MAX_PASOS pasos o hasta que lo pares tú.")
         ejecutarCiclo()
     }
 
@@ -63,21 +70,47 @@ class EncuestaAgent(
         onFin("⏹ Modo encuestas detenido. $motivo")
     }
 
+    /** Reintenta o continúa el ciclo sin nunca llamar a detener() por un error puntual. */
+    private fun seguirTrasError(mensaje: String) {
+        if (!activo) return
+        reintentosPasoActual++
+        onLog("⚠️ $mensaje (reintento $reintentosPasoActual)")
+        if (reintentosPasoActual >= MAX_REINTENTOS_ANTES_DE_DESPLAZAR) {
+            // Varios fallos seguidos en la misma pantalla: no nos quedamos
+            // atascados pidiendo lo mismo a la IA, probamos a desplazar para
+            // que la siguiente vuelta tenga contenido distinto.
+            reintentosPasoActual = 0
+            FenixAccessibilityService.instance?.scrollForward()
+        }
+        handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
+    }
+
     private fun ejecutarCiclo() {
         if (!activo) return
-        val service = FenixAccessibilityService.instance
-        if (service == null) {
-            detener("El control de pantalla no está activo (actívalo en Ajustes de Android).")
-            return
-        }
         if (pasos >= MAX_PASOS) {
             detener("Se alcanzó el límite de $MAX_PASOS pasos. Revisa la pantalla por si la encuesta ya terminó.")
             return
         }
+        val service = FenixAccessibilityService.instance
+        if (service == null) {
+            // Sin el control de pantalla no hay nada que hacer, pero no
+            // damos por muerta la encuesta: reintentamos por si el usuario
+            // reactiva el servicio de accesibilidad al vuelo.
+            seguirTrasError("El control de pantalla no está activo. Actívalo en Ajustes de Android.")
+            return
+        }
         pasos++
 
-        val elementos = service.listarElementosInteractivos()
-        val textoPantalla = service.readScreenContent()
+        val elementos: List<FenixAccessibilityService.ElementoUI>
+        val textoPantalla: String
+        try {
+            elementos = service.listarElementosInteractivos()
+            textoPantalla = service.readScreenContent()
+        } catch (e: Exception) {
+            Log.e("EncuestaAgent", "Error leyendo la pantalla", e)
+            seguirTrasError("No pude leer la pantalla (${e.message ?: "error desconocido"}).")
+            return
+        }
 
         // Si no hay nada con qué interactuar, no gastamos una llamada a la IA
         // preguntando qué hacer: desplazamos directamente. Así la encuesta
@@ -89,6 +122,7 @@ class EncuestaAgent(
             if (activo) handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
             return
         }
+        reintentosPasoActual = 0
 
         val palabrasContinuar = listOf(
             "continuar", "siguiente", "next", "enviar", "submit", "finalizar",
@@ -104,7 +138,12 @@ class EncuestaAgent(
 
         pedirSiguienteAccion(textoPantalla, listado) { accion ->
             if (!activo) return@pedirSiguienteAccion
-            ejecutarAccion(service, accion)
+            try {
+                ejecutarAccion(service, accion)
+            } catch (e: Exception) {
+                Log.e("EncuestaAgent", "Error ejecutando la acción", e)
+                onLog("⚠️ No pude ejecutar \"$accion\" (${e.message ?: "error"}), sigo adelante.")
+            }
             if (activo) {
                 handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
             }
@@ -175,15 +214,19 @@ class EncuestaAgent(
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 Log.e("EncuestaAgent", "Error de red", e)
-                handler.post { detener("Error de red: ${e.message}") }
+                // Un timeout o corte de red puntual NO debe matar el modo
+                // encuestas entero: reintentamos el mismo paso.
+                handler.post { seguirTrasError("Error de red: ${e.message}") }
             }
 
             override fun onResponse(call: Call, response: Response) {
                 response.use {
                     if (!it.isSuccessful) {
                         val cuerpo = try { it.body?.string()?.take(200) } catch (e: Exception) { null }
+                        // Igual con errores del servidor (429 rate-limit, 500,
+                        // etc.): reintentamos en vez de rendirnos del todo.
                         handler.post {
-                            detener("Error del servidor: ${it.code}${if (!cuerpo.isNullOrBlank()) " - $cuerpo" else ""}")
+                            seguirTrasError("Error del servidor: ${it.code}${if (!cuerpo.isNullOrBlank()) " - $cuerpo" else ""}")
                         }
                         return
                     }
@@ -195,7 +238,8 @@ class EncuestaAgent(
                         handler.post { callback(content) }
                     } catch (e: Exception) {
                         Log.e("EncuestaAgent", "Error al parsear", e)
-                        handler.post { detener("No entendí la respuesta de la IA.") }
+                        // Respuesta rara de la IA: reintentamos en lugar de parar.
+                        handler.post { seguirTrasError("No entendí la respuesta de la IA.") }
                     }
                 }
             }
