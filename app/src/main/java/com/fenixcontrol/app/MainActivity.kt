@@ -39,9 +39,6 @@ class MainActivity : AppCompatActivity() {
         getSharedPreferences("fenix_prefs", Context.MODE_PRIVATE)
     }
 
-    // Agente autónomo de "modo encuestas" (null cuando no está activo).
-    private var encuestaAgent: EncuestaAgent? = null
-
     // Lanzador del reconocimiento de voz de Android. Al terminar, mete lo
     // dictado como si el usuario lo hubiera escrito y lo procesa.
         private val voiceLauncher = registerForActivityResult(
@@ -54,9 +51,12 @@ class MainActivity : AppCompatActivity() {
                     binding.editTextMessage.setText(dicho)
                     binding.editTextMessage.setSelection(dicho.length)
                     enviarMensaje(dicho)
+                } else {
+                    addMessage("No entendí nada, prueba de nuevo un poco más despacio y cerca del micro.", false)
                 }
             } else {
                 Log.w("Voz", "Reconocimiento de voz cancelado o sin resultado (resultCode=${result.resultCode})")
+                addMessage("No he entendido bien. Prueba otra vez, o descarga el reconocimiento de voz sin conexión en Ajustes de Google para que falle menos.", false)
             }
         }
 
@@ -70,6 +70,16 @@ class MainActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
             putExtra(RecognizerIntent.EXTRA_PROMPT, "Habla ahora...")
+            // Preferir el motor offline si está descargado: más rápido y no
+            // depende de la red, así falla menos con "No lo he entendido".
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            // Da más margen de silencio antes de cortar el audio, para frases
+            // dichas más despacio o con alguna pausa.
+            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
+            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
+            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 3000)
+            // Pide varias alternativas por si la primera transcripción falla.
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         }
         try {
             voiceLauncher.launch(intent)
@@ -77,6 +87,7 @@ class MainActivity : AppCompatActivity() {
             addMessage("Este móvil no tiene reconocimiento de voz disponible.", false)
         }
     }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,8 +120,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.buttonEncuesta.setOnClickListener {
-            if (encuestaAgent?.estaActivo() == true) {
-                encuestaAgent?.detener()
+            if (EncuestaManager.estaActivo()) {
+                EncuestaManager.detener()
+                binding.buttonEncuesta.text = "📋"
             } else {
                 mostrarDialogoEncuesta()
             }
@@ -123,9 +135,12 @@ class MainActivity : AppCompatActivity() {
             "✨ Nuevo: con DOBLE PULSACIÓN de SUBIR VOLUMEN me abres estés donde " +
             "estés y me hablas (\"lee\", \"responde hola\", \"abre WhatsApp\", " +
             "\"desliza\"). Sé hacer: abrir apps, leer pantalla, pulsar, escribir, " +
-            "deslizar, y responder tus preguntas. 📋 Con el botón de encuestas " +
-            "puedo rellenar solo, paso a paso, una encuesta que tengas abierta " +
-            "en pantalla, según el perfil que me des; se puede parar en cualquier momento.",
+            "deslizar, y responder tus preguntas. 📋 Modo encuestas: primero " +
+            "pulsa 📋 aquí UNA VEZ para guardar tu perfil de respuesta. Después, " +
+            "abre la encuesta y actívalo con doble pulsación de volumen + " +
+            "\"activa el modo encuestas\" (para pararlo: \"para la encuesta\"). " +
+            "Los avisos del agente aparecen como mensajes flotantes sobre la " +
+            "propia encuesta, no aquí en el chat.",
             false
         )
     }
@@ -179,24 +194,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun iniciarModoEncuesta(apiKey: String, perfil: String) {
         binding.buttonEncuesta.text = "⏹"
-        encuestaAgent = EncuestaAgent(
-            client = client,
-            apiKey = apiKey,
-            perfil = perfil,
-            onLog = { texto -> runOnUiThread { addMessage(texto, false) } },
-            onFin = { texto ->
-                runOnUiThread {
-                    addMessage(texto, false)
-                    binding.buttonEncuesta.text = "📋"
-                    encuestaAgent = null
-                }
-            }
-        ).also { it.iniciar() }
+        EncuestaManager.iniciar(this, apiKey, perfil)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Por si el modo encuestas se activó o paró por voz mientras el chat
+        // no estaba en primer plano, sincronizamos el texto del botón.
+        binding.buttonEncuesta.text = if (EncuestaManager.estaActivo()) "⏹" else "📋"
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        encuestaAgent?.detener("Actividad cerrada.")
+        // OJO: no detenemos el modo encuestas aquí a propósito. Debe poder
+        // seguir corriendo aunque el usuario cierre o abandone este chat,
+        // ya que normalmente estará usándolo con la encuesta en primer plano.
     }
 
     private fun addMessage(text: String, isUser: Boolean) {
@@ -262,7 +274,10 @@ class MainActivity : AppCompatActivity() {
             override fun onResponse(call: Call, response: Response) {
                 response.use {
                     if (!it.isSuccessful) {
-                        runOnUiThread { addMessage("Error del servidor: ${it.code}", false) }
+                        val cuerpo = try { it.body?.string()?.take(200) } catch (e: Exception) { null }
+                        runOnUiThread {
+                            addMessage("Error del servidor: ${it.code}${if (!cuerpo.isNullOrBlank()) " - $cuerpo" else ""}", false)
+                        }
                         return
                     }
                     val respBody = it.body?.string()
@@ -406,6 +421,7 @@ class MainActivity : AppCompatActivity() {
             "youtube" to "com.google.android.youtube",
             "chrome" to "com.android.chrome",
             "gmail" to "com.google.android.gm",
+            "google" to "com.google.android.googlequicksearchbox",
             "camara" to "android.media.action.IMAGE_CAPTURE",
             "cámara" to "android.media.action.IMAGE_CAPTURE",
             "ajustes" to "android.settings.SETTINGS",

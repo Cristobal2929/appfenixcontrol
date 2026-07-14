@@ -150,7 +150,10 @@ class EncuestaAgent(
             override fun onResponse(call: Call, response: Response) {
                 response.use {
                     if (!it.isSuccessful) {
-                        handler.post { detener("Error del servidor: ${it.code}") }
+                        val cuerpo = try { it.body?.string()?.take(200) } catch (e: Exception) { null }
+                        handler.post {
+                            detener("Error del servidor: ${it.code}${if (!cuerpo.isNullOrBlank()) " - $cuerpo" else ""}")
+                        }
                         return
                     }
                     try {

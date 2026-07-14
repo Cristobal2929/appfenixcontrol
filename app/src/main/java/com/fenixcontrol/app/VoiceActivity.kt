@@ -1,7 +1,9 @@
 package com.fenixcontrol.app
 
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.widget.Toast
@@ -15,8 +17,14 @@ import androidx.appcompat.app.AppCompatActivity
  *
  * Como el servicio de accesibilidad sigue viendo la pantalla de fondo, Fénix
  * puede leer y actuar sobre CUALQUIER app, no solo sobre su propio chat.
+ * También permite activar/parar el modo encuestas por voz, para poder
+ * arrancarlo estando encima de la encuesta sin tener que abrir el chat.
  */
 class VoiceActivity : AppCompatActivity() {
+
+    private val prefs: SharedPreferences by lazy {
+        getSharedPreferences("fenix_prefs", Context.MODE_PRIVATE)
+    }
 
     private val voiceLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -25,6 +33,8 @@ class VoiceActivity : AppCompatActivity() {
         val dicho = textos?.firstOrNull()?.trim()
         if (!dicho.isNullOrEmpty()) {
             ejecutarOrden(dicho)
+        } else {
+            Toast.makeText(this, "No entendí, prueba otra vez más despacio", Toast.LENGTH_SHORT).show()
         }
         finish()  // cerramos la actividad transparente al terminar
     }
@@ -35,6 +45,11 @@ class VoiceActivity : AppCompatActivity() {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
             putExtra(RecognizerIntent.EXTRA_PROMPT, "Fénix te escucha...")
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
+            putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 2500)
+            putExtra("android.speech.extra.SPEECH_INPUT_MINIMUM_LENGTH_MILLIS", 3000)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
         }
         try {
             voiceLauncher.launch(intent)
@@ -54,6 +69,42 @@ class VoiceActivity : AppCompatActivity() {
 
         if (service == null) {
             Toast.makeText(this, "Activa el control de pantalla primero", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        // PARAR MODO ENCUESTAS: "para la encuesta" / "detén la encuesta"...
+        if (lower.contains("para la encuesta") || lower.contains("detén la encuesta") ||
+            lower.contains("detener encuesta") || lower.contains("para encuesta")
+        ) {
+            EncuestaManager.detener("Detenido por voz.")
+            Toast.makeText(this, "⏹ Modo encuestas detenido", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // ACTIVAR MODO ENCUESTAS: "activa el modo encuestas" / "rellena la encuesta"...
+        // Reutiliza la clave y el último perfil guardados desde el botón 📋 del chat,
+        // así se puede arrancar por voz sin tener que abrir Fénix y tapar la encuesta.
+        if (lower.contains("encuesta")) {
+            if (EncuestaManager.estaActivo()) {
+                Toast.makeText(this, "El modo encuestas ya está activo", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val apiKey = prefs.getString("api_key", null)
+            val perfil = prefs.getString("perfil_encuesta", null)
+            if (apiKey.isNullOrEmpty()) {
+                Toast.makeText(this, "Configura tu clave de Cerebras en Ajustes primero", Toast.LENGTH_LONG).show()
+                return
+            }
+            if (perfil.isNullOrEmpty()) {
+                Toast.makeText(
+                    this,
+                    "Define primero un perfil desde el botón 📋 del chat; una vez guardado, podrás activarlo por voz",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+            EncuestaManager.iniciar(this, apiKey, perfil)
+            Toast.makeText(this, "📋 Modo encuestas iniciado (máx. 500 pasos)", Toast.LENGTH_SHORT).show()
             return
         }
 
