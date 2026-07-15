@@ -34,7 +34,7 @@ class EncuestaAgent(
     private val perfil: String,
     private val onLog: (String) -> Unit,
     private val onFin: (String) -> Unit,
-    private val onPausado: (String) -> Unit = {}
+    private val onPausado: (String) -> Unit
 ) {
     companion object {
         private const val MODEL = "gpt-oss-120b"
@@ -47,21 +47,11 @@ class EncuestaAgent(
     private var pasos = 0
     private var activo = false
 
-    // Cuando el agente se atasca de verdad (misma pantalla sin avanzar, o
-    // dudas de FIN sin confirmar), en vez de rendirse del todo se PAUSA y
-    // pide ayuda: el usuario resuelve lo que haga falta a mano y luego
-    // reanuda con reanudar() (toque largo en la burbuja). No hay que
-    // reconfigurar el perfil ni volver a arrancar desde cero.
+    // Pausa "pidiendo ayuda": la IA se ha topado con algo que no sabe resolver
+    // sola (ej. un captcha, una pregunta que requiere un dato que no está en
+    // el perfil, un paso de verificación) y necesita que el usuario intervenga
+    // a mano. El ciclo se detiene sin perder el estado; reanudar() lo retoma.
     private var pausado = false
-
-    // Detección de bucle: si el texto de la pantalla es IDÉNTICO varias
-    // veces seguidas a pesar de haber ejecutado acciones, algo no está
-    // avanzando de verdad (un clic que no hace nada, una validación que no
-    // pasa, etc.). Tras varias veces seguidas, se pausa y se pide ayuda en
-    // vez de seguir gastando llamadas a la IA sobre la misma pantalla.
-    private var textoPantallaAnterior = ""
-    private var vecesMismaPantallaSeguida = 0
-    private val MAX_MISMA_PANTALLA_SEGUIDA = 5
 
     // Reintentos consecutivos del PASO ACTUAL (red/servidor/parseo). No paran
     // el modo encuestas: solo evitan martillar la API en bucle cerrado sin
@@ -109,27 +99,6 @@ class EncuestaAgent(
     fun estaActivo(): Boolean = activo
     fun estaPausado(): Boolean = pausado
 
-    /**
-     * Pausa el modo encuestas (sin apagarlo del todo) para pedir ayuda al
-     * usuario. No borra el perfil ni el progreso; con reanudar() sigue
-     * exactamente donde lo dejó.
-     */
-    private fun pausar(motivo: String) {
-        if (!activo || pausado) return
-        pausado = true
-        handler.removeCallbacksAndMessages(null)
-        onPausado("⏸ Necesito tu ayuda: $motivo Resuélvelo tú en la pantalla y mantén pulsada la burbuja 🔥 para que siga solo.")
-    }
-
-    /** Reanuda tras una pausa pedida con pausar(). Lo llama la burbuja/voz. */
-    fun reanudar() {
-        if (!activo || !pausado) return
-        pausado = false
-        vecesMismaPantallaSeguida = 0
-        onLog("▶️ Sigo yo solo...")
-        ejecutarCiclo()
-    }
-
     fun iniciar() {
         if (activo) return
         activo = true
@@ -137,8 +106,6 @@ class EncuestaAgent(
         pasos = 0
         reintentosPasoActual = 0
         finsSinConfirmarSeguidos = 0
-        textoPantallaAnterior = ""
-        vecesMismaPantallaSeguida = 0
         onLog("📋 Modo encuestas iniciado. No se detendrá solo: sigue hasta $MAX_PASOS pasos o hasta que lo pares tú.")
         ejecutarCiclo()
     }
@@ -146,13 +113,30 @@ class EncuestaAgent(
     fun detener(motivo: String = "Detenido por el usuario.") {
         if (!activo) return
         activo = false
+        pausado = false
         handler.removeCallbacksAndMessages(null)
         onFin("⏹ Modo encuestas detenido. $motivo")
     }
 
+    /** Pausa el ciclo pidiendo intervención del usuario (captcha, dato que falta, etc.). */
+    private fun pausar(motivo: String) {
+        if (!activo || pausado) return
+        pausado = true
+        handler.removeCallbacksAndMessages(null)
+        onPausado("⏸ Encuesta en pausa: $motivo. Toca la burbuja para retomar cuando lo resuelvas.")
+    }
+
+    /** Retoma el ciclo tras una pausa pidiendo ayuda. */
+    fun reanudar() {
+        if (!activo || !pausado) return
+        pausado = false
+        onLog("▶️ Reanudando modo encuestas...")
+        ejecutarCiclo()
+    }
+
     /** Reintenta o continúa el ciclo sin nunca llamar a detener() por un error puntual. */
     private fun seguirTrasError(mensaje: String) {
-        if (!activo) return
+        if (!activo || pausado) return
         reintentosPasoActual++
         onLog("⚠️ $mensaje (reintento $reintentosPasoActual)")
         if (reintentosPasoActual >= MAX_REINTENTOS_ANTES_DE_DESPLAZAR) {
@@ -193,21 +177,6 @@ class EncuestaAgent(
             return
         }
 
-        // Si la pantalla es exactamente la misma que la vuelta anterior a
-        // pesar de haber ejecutado una acción, no estamos avanzando de
-        // verdad (un toque que no hace nada, una validación que no pasa...).
-        // Tras varias veces seguidas, mejor pedir ayuda que insistir a ciegas.
-        if (textoPantalla.isNotBlank() && textoPantalla == textoPantallaAnterior) {
-            vecesMismaPantallaSeguida++
-            if (vecesMismaPantallaSeguida >= MAX_MISMA_PANTALLA_SEGUIDA) {
-                pausar("Llevo $vecesMismaPantallaSeguida intentos sin que la pantalla cambie; puede que un botón no responda o falte algo que no sé interpretar.")
-                return
-            }
-        } else {
-            vecesMismaPantallaSeguida = 0
-        }
-        textoPantallaAnterior = textoPantalla
-
         // Si no hay nada con qué interactuar, no gastamos una llamada a la IA
         // preguntando qué hacer: desplazamos directamente. Así la encuesta
         // nunca se queda "colgada" esperando una decisión sobre una pantalla
@@ -215,7 +184,7 @@ class EncuestaAgent(
         if (elementos.isEmpty()) {
             service.scrollForward()
             onLog("↕️ Sin elementos visibles, desplazando para buscar más...")
-            if (activo) handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
+            if (activo && !pausado) handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
             return
         }
         reintentosPasoActual = 0
@@ -237,7 +206,7 @@ class EncuestaAgent(
         pedirSiguienteAccion(textoPantalla, listado) { accion ->
             if (!activo) return@pedirSiguienteAccion
             ejecutarAccion(service, accion) {
-                if (activo) handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
+                if (activo && !pausado) handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
             }
         }
     }
@@ -266,11 +235,19 @@ class EncuestaAgent(
               DESPLAZAR                    -> baja la pantalla para ver más opciones
               FIN:<motivo corto>           -> la encuesta ha terminado de verdad (pantalla
                                                de agradecimiento/confirmación final)
+              AYUDA:<motivo corto>         -> SOLO si te topas con algo que de verdad no
+                                               puedes resolver solo (captcha, verificación
+                                               por SMS/email, un dato personal real que no
+                                               está en el perfil, un error bloqueante de la
+                                               app). Pausa y espera a que el usuario
+                                               intervenga a mano.
 
             Reglas MUY IMPORTANTES:
             1. SIEMPRE debes elegir una respuesta y avanzar; nunca te quedes sin hacer
                nada. Si una pregunta no está cubierta en el perfil, elige la opción más
-               neutral/razonable y sigue adelante. No pares a "pensar".
+               neutral/razonable y sigue adelante. No pares a "pensar". AYUDA es un
+               último recurso para bloqueos reales (captcha, verificación externa),
+               no una salida fácil para preguntas simplemente difíciles.
             2. Si la pregunta permite elegir varias opciones (checkboxes, "selecciona
                todas las que apliquen"), marca en el MISMO turno TODAS las opciones que
                correspondan al perfil usando MARCAR:<n1>,<n2>,<n3> antes de avanzar de
@@ -371,7 +348,7 @@ class EncuestaAgent(
         i: Int,
         onDone: () -> Unit
     ) {
-        if (i >= partes.size || !activo) {
+        if (i >= partes.size || !activo || pausado) {
             onDone()
             return
         }
@@ -382,7 +359,7 @@ class EncuestaAgent(
             Log.e("EncuestaAgent", "Error ejecutando \"$parte\"", e)
             onLog("⚠️ No pude ejecutar \"$parte\" (${e.message ?: "error"}), sigo adelante.")
         }
-        if (!activo) {
+        if (!activo || pausado) {
             onDone()
             return
         }
@@ -396,6 +373,12 @@ class EncuestaAgent(
     }
 
     private fun ejecutarUnaOrden(service: FenixAccessibilityService, accion: String) {
+        Regex("""AYUDA:?\s*(.*)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
+            val motivo = m.groupValues[1].ifBlank { "necesita intervención manual" }
+            pausar(motivo)
+            return
+        }
+
         Regex("""FIN:?\s*(.*)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
             val motivo = m.groupValues[1].ifBlank { "sin motivo indicado" }
             val pantalla = ultimoTextoPantalla.lowercase()
@@ -412,7 +395,7 @@ class EncuestaAgent(
             // confirmar (red de seguridad para no quedarnos en bucle eterno).
             finsSinConfirmarSeguidos++
             if (finsSinConfirmarSeguidos >= MAX_FINS_SIN_CONFIRMAR) {
-                pausar("La IA insistió $finsSinConfirmarSeguidos veces en que la encuesta terminó (\"$motivo\"), pero la pantalla no lo confirma con claridad. Échale un vistazo.")
+                detener("La IA insistió $finsSinConfirmarSeguidos veces en que la encuesta terminó (\"$motivo\"), aunque la pantalla no lo confirma con claridad. Revísala por si acaso.")
                 return
             }
             onLog("⚠️ La IA dijo FIN (\"$motivo\") pero la pantalla no lo confirma, sigo (intento $finsSinConfirmarSeguidos/$MAX_FINS_SIN_CONFIRMAR)...")
