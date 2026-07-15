@@ -5,7 +5,6 @@ import android.accessibilityservice.GestureDescription
 import android.accessibilityservice.GestureDescription.StrokeDescription
 import android.content.Intent
 import android.graphics.Path
-import android.graphics.Rect
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
@@ -251,30 +250,10 @@ class FenixAccessibilityService : AccessibilityService() {
         return resultado
     }
 
-    /**
-     * Pulsa el elemento nº `indice` de la última lista obtenida con listarElementosInteractivos().
-     *
-     * Primero intenta ACTION_CLICK (lo normal para checkboxes/radios nativos).
-     * Muchas webs hechas con React/Vue (frecuentes en encuestas) no
-     * reaccionan a ACTION_CLICK de accesibilidad en botones "Continuar" -
-     * el sistema dice que se pulsó pero la página se queda igual. Si
-     * ACTION_CLICK no está disponible o el nodo no tiene bounds, se hace un
-     * toque real en el centro del elemento como respaldo.
-     */
+    /** Pulsa el elemento nº `indice` de la última lista obtenida con listarElementosInteractivos(). */
     fun pulsarElementoPorIndice(indice: Int): Boolean {
         val nodo = ultimosElementos.getOrNull(indice) ?: return false
-        if (nodo.isClickable && nodo.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            return true
-        }
-        return tocarNodoPorCoordenadas(nodo)
-    }
-
-    private fun tocarNodoPorCoordenadas(nodo: AccessibilityNodeInfo): Boolean {
-        val bounds = Rect()
-        nodo.getBoundsInScreen(bounds)
-        if (bounds.width() <= 0 || bounds.height() <= 0) return false
-        clickAt(bounds.exactCenterX().toFloat(), bounds.exactCenterY().toFloat())
-        return true
+        return nodo.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
     /**
@@ -287,9 +266,7 @@ class FenixAccessibilityService : AccessibilityService() {
         var ok = 0
         for (i in indices) {
             val nodo = ultimosElementos.getOrNull(i) ?: continue
-            val marcado = (nodo.isClickable && nodo.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-                || tocarNodoPorCoordenadas(nodo)
-            if (marcado) ok++
+            if (nodo.performAction(AccessibilityNodeInfo.ACTION_CLICK)) ok++
         }
         return ok
     }
