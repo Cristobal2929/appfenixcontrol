@@ -57,6 +57,11 @@ class EncuestaAgent(
     // por una lectura equivocada de una pantalla intermedia.
     private var ultimoTextoPantalla = ""
 
+    // Índice del botón 👉 detectado en el último listado (Continuar/Siguiente/
+    // Enviar), si lo hay. Sirve de respaldo cuando la IA dice "continuar" o
+    // "avanza" sin dar el número exacto, para no perder el turno por eso.
+    private var ultimoIndiceContinuar: Int? = null
+
     // Cuántas veces seguidas la IA ha dicho FIN sin que la pantalla lo
     // confirme. Si insiste varias veces lo aceptamos como red de seguridad,
     // pero el umbral es alto a propósito: preferimos seguir de más que
@@ -71,6 +76,17 @@ class EncuestaAgent(
         "thank you for completing", "thank you for your participation", "survey complete",
         "survey has been completed", "submission received", "response has been recorded",
         "you have completed", "quota", "screened out", "no calificas", "no cumples con el perfil"
+    )
+
+    // Avisos típicos de "preguntas en tabla/matriz" (una fila por franja
+    // horaria, tema, marca, etc.) donde aún falta responder alguna fila.
+    // Si la pantalla muestra alguno de estos textos, NO se pulsa el botón
+    // de avanzar aunque la IA lo pida: casi seguro que hay una fila
+    // desplegable sin responder que la IA no ha visto todavía.
+    private val palabrasFaltaResponderFila = listOf(
+        "seleccione una respuesta por fila", "seleccione una respuesta para cada fila",
+        "debe responder todas las filas", "falta responder", "respuesta por fila",
+        "select an answer for each row", "please answer all rows", "answer for each row"
     )
 
     fun estaActivo(): Boolean = activo
@@ -151,24 +167,20 @@ class EncuestaAgent(
             "continuar", "siguiente", "next", "enviar", "submit", "finalizar",
             "aceptar", "confirmar", "enviar respuestas", "terminar"
         )
+        ultimoIndiceContinuar = elementos.firstOrNull { e ->
+            e.tipo == "boton" && palabrasContinuar.any { e.texto.lowercase().contains(it) }
+        }?.indice
         val listado = elementos.joinToString("\n") { e ->
             val marca = if (e.tipo == "marcado") " [ya marcado]" else ""
-            val esContinuar = e.tipo == "boton" &&
-                palabrasContinuar.any { e.texto.lowercase().contains(it) }
+            val esContinuar = e.indice == ultimoIndiceContinuar
             val etiqueta = if (esContinuar) " 👉[botón para avanzar de página]" else ""
             "${e.indice}: (${e.tipo}) ${e.texto}$marca$etiqueta"
         }
 
         pedirSiguienteAccion(textoPantalla, listado) { accion ->
             if (!activo) return@pedirSiguienteAccion
-            try {
-                ejecutarAccion(service, accion)
-            } catch (e: Exception) {
-                Log.e("EncuestaAgent", "Error ejecutando la acción", e)
-                onLog("⚠️ No pude ejecutar \"$accion\" (${e.message ?: "error"}), sigo adelante.")
-            }
-            if (activo) {
-                handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
+            ejecutarAccion(service, accion) {
+                if (activo) handler.postDelayed({ ejecutarCiclo() }, PAUSA_MS)
             }
         }
     }
@@ -188,11 +200,12 @@ class EncuestaAgent(
             En cada turno te doy el texto visible de la pantalla y una lista numerada
             de elementos con los que puedes interactuar (botones, casillas, radios,
             campos de texto). Los elementos marcados con 👉 son botones para avanzar
-            de página (Continuar/Siguiente/Enviar). Responde SOLO con UNA de estas
-            órdenes exactas, sin nada más de texto:
+            de página (Continuar/Siguiente/Enviar). Responde SOLO con una o varias de
+            estas órdenes exactas separadas por punto y coma ";", sin nada más de texto:
               MARCAR:<numero>              -> pulsa/marca un único elemento
               MARCAR:<n1>,<n2>,<n3>        -> pulsa/marca varios elementos a la vez
               ESCRIBIR:<numero>:<texto>    -> escribe <texto> en el campo con ese número
+              CONTINUAR                    -> pulsa el botón 👉 de avanzar de página
               DESPLAZAR                    -> baja la pantalla para ver más opciones
               FIN:<motivo corto>           -> la encuesta ha terminado de verdad (pantalla
                                                de agradecimiento/confirmación final)
@@ -205,14 +218,31 @@ class EncuestaAgent(
                todas las que apliquen"), marca en el MISMO turno TODAS las opciones que
                correspondan al perfil usando MARCAR:<n1>,<n2>,<n3> antes de avanzar de
                página. No avances con la pregunta a medio responder.
-            3. Cuando ya hayas respondido todo lo visible en la pantalla, busca el
-               elemento marcado con 👉 y púlsalo (MARCAR:<numero>) para pasar a la
-               siguiente página. Si no ves ningún 👉 ni preguntas nuevas, usa DESPLAZAR
+            3. Algunas pantallas son una TABLA/MATRIZ con varias filas (ej: franjas
+               horarias, varios temas o marcas, cada una con su propia pregunta). A
+               veces cada fila está colapsada y hay que tocarla primero para
+               desplegarla y ver sus opciones. Estrategia: si ves una fila con texto
+               pero sin opciones visibles debajo, márcala para desplegarla; en el
+               turno siguiente responde esa fila; luego repite con la siguiente fila
+               sin desplegar. Sigue así fila por fila. Si el texto de la pantalla dice
+               algo como "seleccione una respuesta por fila" o similar, es que TODAVÍA
+               falta responder alguna fila: no pulses el botón de avanzar aunque lo
+               veas, sigue buscando la fila que falta (puede requerir DESPLAZAR para
+               verla) hasta que todas tengan una opción marcada.
+            4. Cuando ya hayas respondido todo lo visible en la pantalla, busca el
+               elemento marcado con 👉 y púlsalo (MARCAR:<numero> o CONTINUAR) para
+               pasar a la siguiente página. IMPORTANTE: en cuanto termines de
+               responder TODO lo pendiente en la pantalla, añade también CONTINUAR en
+               el mismo turno separado por ";". Ejemplos: "MARCAR:2;CONTINUAR" o
+               "ESCRIBIR:0:34;CONTINUAR". No dejes el "pulsar continuar" para el turno
+               siguiente si ya no queda nada más que responder en esa pantalla: es un
+               fallo grave que la respuesta se quede sin enviar.
+            5. Si no ves ningún 👉 ni preguntas nuevas tras responder, usa DESPLAZAR
                antes de rendirte.
-            4. Solo responde FIN si el texto de la pantalla indica claramente que la
+            6. Solo responde FIN si el texto de la pantalla indica claramente que la
                encuesta ya se completó (agradecimiento, confirmación de envío, etc.).
                No respondas FIN solo porque una pregunta te resulte difícil.
-            5. Elige solo números que existan en la lista. Nunca reveles datos
+            7. Elige solo números que existan en la lista. Nunca reveles datos
                personales reales del usuario, solo el perfil dado.
         """.trimIndent()
 
@@ -269,9 +299,46 @@ class EncuestaAgent(
         })
     }
 
-    private fun ejecutarAccion(service: FenixAccessibilityService, accionCruda: String) {
-        val accion = accionCruda.trim()
+    private fun ejecutarAccion(service: FenixAccessibilityService, accionCruda: String, onDone: () -> Unit) {
+        // La IA puede encadenar varias órdenes en un turno, ej:
+        // "ESCRIBIR:0:34;CONTINUAR". Las ejecutamos en orden, una a una,
+        // con una pequeña pausa tras ESCRIBIR para que el teclado en
+        // pantalla termine de cerrarse antes del siguiente toque.
+        val partes = accionCruda.split(";").map { it.trim() }.filter { it.isNotBlank() }
+        ejecutarPartes(service, partes, 0, onDone)
+    }
 
+    private fun ejecutarPartes(
+        service: FenixAccessibilityService,
+        partes: List<String>,
+        i: Int,
+        onDone: () -> Unit
+    ) {
+        if (i >= partes.size || !activo) {
+            onDone()
+            return
+        }
+        val parte = partes[i]
+        try {
+            ejecutarUnaOrden(service, parte)
+        } catch (e: Exception) {
+            Log.e("EncuestaAgent", "Error ejecutando \"$parte\"", e)
+            onLog("⚠️ No pude ejecutar \"$parte\" (${e.message ?: "error"}), sigo adelante.")
+        }
+        if (!activo) {
+            onDone()
+            return
+        }
+        if (i + 1 < partes.size) {
+            val esperaTecladoCierre = parte.startsWith("ESCRIBIR", ignoreCase = true)
+            val pausa = if (esperaTecladoCierre) 450L else 120L
+            handler.postDelayed({ ejecutarPartes(service, partes, i + 1, onDone) }, pausa)
+        } else {
+            onDone()
+        }
+    }
+
+    private fun ejecutarUnaOrden(service: FenixAccessibilityService, accion: String) {
         Regex("""FIN:?\s*(.*)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
             val motivo = m.groupValues[1].ifBlank { "sin motivo indicado" }
             val pantalla = ultimoTextoPantalla.lowercase()
@@ -297,9 +364,42 @@ class EncuestaAgent(
         }
         finsSinConfirmarSeguidos = 0
 
+        // "CONTINUAR" a secas (sin número): usa el botón 👉 detectado en el
+        // último listado. Evita que se pierda el turno si la IA no da el
+        // número exacto del botón de avanzar.
+        if (Regex("""^(CONTINUAR|CONTINUE|AVANZAR|SIGUIENTE)\s*$""", RegexOption.IGNORE_CASE).matches(accion)) {
+            val pantalla = ultimoTextoPantalla.lowercase()
+            if (palabrasFaltaResponderFila.any { pantalla.contains(it) }) {
+                onLog("⚠️ La página avisa de que falta responder alguna fila; no pulso Continuar todavía, sigo buscando qué falta.")
+                service.scrollForward()
+                return
+            }
+            val idx = ultimoIndiceContinuar
+            if (idx == null) {
+                onLog("⚠️ La IA dijo CONTINUAR pero no detecté ningún botón de avanzar en esta pantalla.")
+                return
+            }
+            val ok = service.pulsarElementoPorIndice(idx)
+            onLog(if (ok) "➡️ Continuar pulsado (elemento $idx)" else "⚠️ No pude pulsar Continuar (elemento $idx)")
+            return
+        }
+
         Regex("""MARCAR:\s*([\d,\s]+)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
             val indices = m.groupValues[1].split(",")
                 .mapNotNull { it.trim().toIntOrNull() }
+            // Si entre los índices a marcar está el propio botón de avanzar,
+            // aplicamos la misma comprobación: no avanzar si la página avisa
+            // de que aún faltan filas por responder.
+            val incluyeContinuar = ultimoIndiceContinuar != null && indices.contains(ultimoIndiceContinuar)
+            if (incluyeContinuar) {
+                val pantalla = ultimoTextoPantalla.lowercase()
+                if (palabrasFaltaResponderFila.any { pantalla.contains(it) }) {
+                    onLog("⚠️ La página avisa de que falta responder alguna fila; no pulso Continuar todavía.")
+                    val restantes = indices.filter { it != ultimoIndiceContinuar }
+                    if (restantes.isNotEmpty()) service.pulsarVariosElementosPorIndice(restantes)
+                    return
+                }
+            }
             if (indices.size <= 1) {
                 val idx = indices.firstOrNull() ?: return
                 val ok = service.pulsarElementoPorIndice(idx)
