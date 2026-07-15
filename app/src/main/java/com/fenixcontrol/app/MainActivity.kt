@@ -234,17 +234,12 @@ class MainActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
             )
-            val alturaMaximaPx = (280 * resources.displayMetrics.density).toInt()
+            val alturaMaximaPx = (200 * resources.displayMetrics.density).toInt()
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, alturaMaximaPx)
         }
 
         AlertDialog.Builder(this)
             .setTitle(getString(R.string.iniciar_encuesta))
-            .setMessage(
-                "Abre primero la encuesta en su app o navegador, deja esta ventana " +
-                "encima y describe cómo debo responder (ej: \"Hombre, 34 años, " +
-                "España, freelance, opiniones neutras y positivas sobre marcas\")."
-            )
             .setView(contenedorScroll)
             .setPositiveButton(getString(R.string.iniciar_encuesta)) { _, _ ->
                 val perfil = input.text?.toString()?.trim().orEmpty()
