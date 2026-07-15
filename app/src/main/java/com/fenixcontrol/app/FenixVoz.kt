@@ -36,7 +36,7 @@ object FenixVoz {
                     if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                         // Si no hay español instalado, no reventamos: usamos el
                         // idioma por defecto del móvil.
-                        motor.language = Locale.getDefault()
+                        motor.setLanguage(Locale.getDefault())
                     }
                     motor.setSpeechRate(1.0f)
                     listo = true
