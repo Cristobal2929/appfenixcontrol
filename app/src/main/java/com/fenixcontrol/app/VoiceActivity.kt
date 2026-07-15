@@ -79,13 +79,17 @@ class VoiceActivity : AppCompatActivity() {
     /**
      * Pequeño panel translúcido en el centro para que se vea que Fénix está
      * escuchando (con SpeechRecognizer no hay diálogo del sistema que lo indique).
+     * Ahora es una SESIÓN: se queda abierto escuchando orden tras orden, en vez
+     * de cerrarse tras la primera. Se cierra diciendo "cierra"/"ya está" o
+     * tocando la pantalla.
      */
     private fun crearPanelEscucha(): FrameLayout {
         val fondo = FrameLayout(this).apply {
             setBackgroundColor(Color.parseColor("#66000000"))
+            setOnClickListener { finish() }
         }
         estado = TextView(this).apply {
-            text = "🎙  Fénix te escucha…"
+            text = "🎙  Fénix te escucha… (toca para cerrar)"
             setTextColor(Color.WHITE)
             textSize = 18f
             setPadding(48, 36, 48, 36)
@@ -106,12 +110,17 @@ class VoiceActivity : AppCompatActivity() {
 
     /** Abre el micrófono con SpeechRecognizer y escucha una orden. */
     private fun empezarAEscuchar() {
+        // Antes de volver a escuchar, Fénix se calla: si estaba diciendo la
+        // respuesta anterior, la corta para no oírse a sí mismo por el micro.
+        FenixVoz.callar()
+
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Toast.makeText(this, "Este móvil no tiene reconocimiento de voz", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
 
+        recognizer?.destroy()
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(escuchaListener)
         }
@@ -150,12 +159,26 @@ class VoiceActivity : AppCompatActivity() {
         override fun onResults(results: Bundle?) {
             val textos = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val dicho = textos?.firstOrNull()?.trim()
-            if (!dicho.isNullOrEmpty()) {
-                ejecutarOrden(dicho)
-            } else {
-                Toast.makeText(this@VoiceActivity, "No entendí, prueba otra vez más despacio", Toast.LENGTH_SHORT).show()
+            if (dicho.isNullOrEmpty()) {
+                estado?.text = "🎙  No te oí, sigo escuchando…"
+                handler.postDelayed({ if (!isFinishing) empezarAEscuchar() }, 400)
+                return
             }
-            finish()
+            val cierraSesion = listOf("cierra", "ya está", "ya esta", "para de escuchar", "adiós fénix", "adios fenix")
+                .any { dicho.lowercase().contains(it) }
+            if (cierraSesion) {
+                Toast.makeText(this@VoiceActivity, "👋 Cerrando el chat de voz", Toast.LENGTH_SHORT).show()
+                FenixVoz.hablar(this@VoiceActivity, "Hasta luego", interrumpir = true)
+                finish()
+                return
+            }
+            ejecutarOrden(dicho)
+            // Seguimos escuchando: es una sesión abierta, no una orden suelta.
+            // Damos algo más de margen (1,2 s) que en el caso de "no te oí" para
+            // que la respuesta hablada se oiga antes de reabrir el micro (que la
+            // cortaría). Las respuestas del chat de voz son cortas.
+            estado?.text = "🎙  Fénix te escucha… (toca para cerrar)"
+            handler.postDelayed({ if (!isFinishing) empezarAEscuchar() }, 1200)
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
@@ -166,10 +189,18 @@ class VoiceActivity : AppCompatActivity() {
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onError(error: Int) {
-            val msg = when (error) {
+            when (error) {
+                // Silencio o no se entendió: no cerramos la sesión, seguimos
+                // escuchando. Es justo lo normal en una conversación abierta.
                 SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
-                    "No te oí bien. Prueba otra vez, más cerca del micro."
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    estado?.text = "🎙  No te oí, sigo escuchando…"
+                    handler.postDelayed({ if (!isFinishing) empezarAEscuchar() }, 400)
+                    return
+                }
+                else -> {}
+            }
+            val msg = when (error) {
                 SpeechRecognizer.ERROR_AUDIO -> "Problema con el micrófono."
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
                     "Falta el permiso de micrófono. Actívalo en Ajustes."
@@ -192,6 +223,17 @@ class VoiceActivity : AppCompatActivity() {
     }
 
     /**
+     * Respuesta de Fénix al usuario: la muestra en un Toast Y la dice en voz
+     * alta. De eso se trata cuando le hablas por voz: que te conteste sin que
+     * tengas que mirar la pantalla. Corta cualquier voz anterior para no
+     * encadenar respuestas viejas.
+     */
+    private fun responder(texto: String, largo: Boolean = false) {
+        Toast.makeText(this, texto, if (largo) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+        FenixVoz.hablar(this, texto, interrumpir = true)
+    }
+
+    /**
      * Interpreta la orden dicha y actúa sobre la app en primer plano.
      * Reutiliza el servicio de accesibilidad para leer, pulsar, escribir...
      */
@@ -200,7 +242,7 @@ class VoiceActivity : AppCompatActivity() {
         val lower = orden.lowercase()
 
         if (service == null) {
-            Toast.makeText(this, "Activa el control de pantalla primero", Toast.LENGTH_LONG).show()
+            responder("Activa el control de pantalla primero", largo = true)
             return
         }
 
@@ -209,7 +251,7 @@ class VoiceActivity : AppCompatActivity() {
             lower.contains("detener encuesta") || lower.contains("para encuesta")
         ) {
             EncuestaManager.detener("Detenido por voz.")
-            Toast.makeText(this, "⏹ Modo encuestas detenido", Toast.LENGTH_SHORT).show()
+            responder("Modo encuestas detenido")
             return
         }
 
@@ -218,25 +260,24 @@ class VoiceActivity : AppCompatActivity() {
         // así se puede arrancar por voz sin tener que abrir Fénix y tapar la encuesta.
         if (lower.contains("encuesta")) {
             if (EncuestaManager.estaActivo()) {
-                Toast.makeText(this, "El modo encuestas ya está activo", Toast.LENGTH_SHORT).show()
+                responder("El modo encuestas ya está activo")
                 return
             }
             val apiKey = prefs.getString("api_key", null)
             val perfil = prefs.getString("perfil_encuesta", null)
             if (apiKey.isNullOrEmpty()) {
-                Toast.makeText(this, "Configura tu clave de Cerebras en Ajustes primero", Toast.LENGTH_LONG).show()
+                responder("Configura tu clave de Cerebras en Ajustes primero", largo = true)
                 return
             }
             if (perfil.isNullOrEmpty()) {
-                Toast.makeText(
-                    this,
-                    "Define primero un perfil desde el botón 📋 del chat; una vez guardado, podrás activarlo por voz",
-                    Toast.LENGTH_LONG
-                ).show()
+                responder(
+                    "Define primero un perfil desde el botón de encuestas del chat; una vez guardado, podrás activarlo por voz",
+                    largo = true
+                )
                 return
             }
             EncuestaManager.iniciar(this, apiKey, perfil)
-            Toast.makeText(this, "📋 Modo encuestas iniciado (máx. 500 pasos)", Toast.LENGTH_SHORT).show()
+            responder("Modo encuestas iniciado. Máximo quinientos pasos")
             return
         }
 
@@ -244,7 +285,7 @@ class VoiceActivity : AppCompatActivity() {
         if (lower.contains("lee") || lower.contains("leer") || lower.contains("qué pone") || lower.contains("que pone")) {
             val contenido = service.readScreenContent()
             val corto = if (contenido.length > 300) contenido.take(300) + "..." else contenido
-            Toast.makeText(this, if (corto.isBlank()) "No hay texto visible" else corto, Toast.LENGTH_LONG).show()
+            responder(if (corto.isBlank()) "No hay texto visible" else corto, largo = true)
             return
         }
 
@@ -252,14 +293,14 @@ class VoiceActivity : AppCompatActivity() {
         val writeRegex = Regex("""(?:escribe|responde|contesta)\s+(.+)""", RegexOption.IGNORE_CASE)
         writeRegex.find(orden)?.let { m ->
             service.inputText(m.groupValues[1].trim())
-            Toast.makeText(this, "Escrito", Toast.LENGTH_SHORT).show()
+            responder("Escrito")
             return
         }
 
         // DESLIZAR
         if (lower.contains("desliza") || lower.contains("baja") || lower.contains("desplaza")) {
             service.scrollForward()
-            Toast.makeText(this, "Desplazado", Toast.LENGTH_SHORT).show()
+            responder("Desplazado")
             return
         }
 
@@ -297,11 +338,13 @@ class VoiceActivity : AppCompatActivity() {
                     return
                 }
             }
-            Toast.makeText(this, "No encontré esa app", Toast.LENGTH_SHORT).show()
+            responder("No encontré esa app")
             return
         }
 
-        // Si no es una orden de control, la mostramos (podrías mandarla al chat)
+        // Si no es una orden de control, la mostramos SOLO en Toast (no en voz).
+        // Es a propósito: si Fénix se oyera a sí mismo por el micro, esta rama
+        // "no reconocida" podría dispararse en bucle contestándose sola.
         Toast.makeText(this, "Orden no reconocida: $orden", Toast.LENGTH_SHORT).show()
     }
 }
