@@ -52,6 +52,27 @@ class EncuestaAgent(
     private var reintentosPasoActual = 0
     private val MAX_REINTENTOS_ANTES_DE_DESPLAZAR = 3
 
+    // Texto de la última pantalla leída; se usa para verificar un FIN antes
+    // de aceptarlo (ver ejecutarAccion). Evita que la IA corte la encuesta
+    // por una lectura equivocada de una pantalla intermedia.
+    private var ultimoTextoPantalla = ""
+
+    // Cuántas veces seguidas la IA ha dicho FIN sin que la pantalla lo
+    // confirme. Si insiste varias veces lo aceptamos como red de seguridad,
+    // pero el umbral es alto a propósito: preferimos seguir de más que
+    // cortar una encuesta a medias.
+    private var finsSinConfirmarSeguidos = 0
+    private val MAX_FINS_SIN_CONFIRMAR = 4
+
+    private val palabrasFinConfirmado = listOf(
+        "gracias por completar", "gracias por tu participación", "gracias por participar",
+        "encuesta ha finalizado", "encuesta finalizada", "encuesta completada",
+        "cuestionario ha finalizado", "hemos recibido tus respuestas", "respuestas enviadas",
+        "thank you for completing", "thank you for your participation", "survey complete",
+        "survey has been completed", "submission received", "response has been recorded",
+        "you have completed", "quota", "screened out", "no calificas", "no cumples con el perfil"
+    )
+
     fun estaActivo(): Boolean = activo
 
     fun iniciar() {
@@ -59,6 +80,7 @@ class EncuestaAgent(
         activo = true
         pasos = 0
         reintentosPasoActual = 0
+        finsSinConfirmarSeguidos = 0
         onLog("📋 Modo encuestas iniciado. No se detendrá solo: sigue hasta $MAX_PASOS pasos o hasta que lo pares tú.")
         ejecutarCiclo()
     }
@@ -106,6 +128,7 @@ class EncuestaAgent(
         try {
             elementos = service.listarElementosInteractivos()
             textoPantalla = service.readScreenContent()
+            ultimoTextoPantalla = textoPantalla
         } catch (e: Exception) {
             Log.e("EncuestaAgent", "Error leyendo la pantalla", e)
             seguirTrasError("No pude leer la pantalla (${e.message ?: "error desconocido"}).")
@@ -250,9 +273,29 @@ class EncuestaAgent(
         val accion = accionCruda.trim()
 
         Regex("""FIN:?\s*(.*)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
-            detener("Encuesta finalizada: ${m.groupValues[1].ifBlank { "sin motivo indicado" }}")
+            val motivo = m.groupValues[1].ifBlank { "sin motivo indicado" }
+            val pantalla = ultimoTextoPantalla.lowercase()
+            val confirmadoPorPantalla = palabrasFinConfirmado.any { pantalla.contains(it) }
+            if (confirmadoPorPantalla) {
+                detener("Encuesta finalizada: $motivo")
+                return
+            }
+            // La IA dice que terminó pero el texto de la pantalla no lo
+            // confirma: probablemente se ha equivocado o hay una pregunta
+            // rara que no supo interpretar. NO paramos; forzamos un
+            // desplazamiento para que la siguiente vuelta vea contenido
+            // distinto, y solo nos rendimos tras varios FIN seguidos sin
+            // confirmar (red de seguridad para no quedarnos en bucle eterno).
+            finsSinConfirmarSeguidos++
+            if (finsSinConfirmarSeguidos >= MAX_FINS_SIN_CONFIRMAR) {
+                detener("La IA insistió $finsSinConfirmarSeguidos veces en que la encuesta terminó (\"$motivo\"), aunque la pantalla no lo confirma con claridad. Revísala por si acaso.")
+                return
+            }
+            onLog("⚠️ La IA dijo FIN (\"$motivo\") pero la pantalla no lo confirma, sigo (intento $finsSinConfirmarSeguidos/$MAX_FINS_SIN_CONFIRMAR)...")
+            service.scrollForward()
             return
         }
+        finsSinConfirmarSeguidos = 0
 
         Regex("""MARCAR:\s*([\d,\s]+)""", RegexOption.IGNORE_CASE).find(accion)?.let { m ->
             val indices = m.groupValues[1].split(",")

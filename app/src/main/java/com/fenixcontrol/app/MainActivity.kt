@@ -429,8 +429,26 @@ class MainActivity : AppCompatActivity() {
         val openRegex = Regex("""(?:open:|abre\s+(?:el\s+|la\s+)?|abrir\s+(?:el\s+|la\s+)?)(.+)""", RegexOption.IGNORE_CASE)
         openRegex.find(texto)?.let { m ->
             val nombreApp = m.groupValues[1].trim()
+            // "abre X en split" / "abre X en dos" / "abre X en pantalla dividida"
+            // fuerza pantalla dividida; para el flujo de encuestas también la
+            // activamos siempre, porque ahí conviene ver la app y Fénix a la vez.
+            val quiereSplit = lower.contains("split") || lower.contains(" en dos") ||
+                lower.contains("dos plano") || lower.contains("pantalla dividida") ||
+                lower.contains("encuesta")
             if (abrirApp(nombreApp)) {
                 addMessage("📲 Abriendo $nombreApp...", false)
+                if (quiereSplit) {
+                    // Pequeña espera para que la app termine de abrir antes
+                    // de pedir el modo split; si no, Android puede ignorarlo.
+                    binding.root.postDelayed({
+                        val ok = FenixAccessibilityService.instance?.activarSplitScreen() ?: false
+                        addMessage(
+                            if (ok) "🔳 Activando pantalla dividida... si Android te pide elegir la segunda app, tócala tú."
+                            else "⚠️ No pude activar la pantalla dividida (¿está encendido el control de pantalla en Ajustes?).",
+                            false
+                        )
+                    }, 900)
+                }
             } else {
                 addMessage("No encontré la app \"$nombreApp\" instalada.", false)
             }

@@ -8,6 +8,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -43,6 +45,7 @@ class VoiceActivity : AppCompatActivity() {
 
     private var recognizer: SpeechRecognizer? = null
     private var estado: TextView? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     // Lanzador de solicitud de permiso de micrófono en tiempo de ejecución.
     private val permisoLauncher = registerForActivityResult(
@@ -275,7 +278,23 @@ class VoiceActivity : AppCompatActivity() {
             val pkg = pkgs.entries.firstOrNull { nombre.contains(it.key) }?.value
             if (pkg != null) {
                 packageManager.getLaunchIntentForPackage(pkg)?.let {
-                    startActivity(it); return
+                    startActivity(it)
+                    // Igual que en el chat: si piden split o estamos en el flujo
+                    // de encuestas, activamos pantalla dividida tras el arranque.
+                    val quiereSplit = lower.contains("split") || lower.contains(" en dos") ||
+                        lower.contains("dos plano") || lower.contains("pantalla dividida") ||
+                        lower.contains("encuesta")
+                    if (quiereSplit) {
+                        handler.postDelayed({
+                            val ok = FenixAccessibilityService.instance?.activarSplitScreen() ?: false
+                            Toast.makeText(
+                                this,
+                                if (ok) "🔳 Activando pantalla dividida..." else "⚠️ No pude activar la pantalla dividida",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }, 900)
+                    }
+                    return
                 }
             }
             Toast.makeText(this, "No encontré esa app", Toast.LENGTH_SHORT).show()

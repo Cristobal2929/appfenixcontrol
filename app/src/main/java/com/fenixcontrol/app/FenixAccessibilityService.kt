@@ -161,6 +161,22 @@ class FenixAccessibilityService : AccessibilityService() {
         node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
     }
 
+    /**
+     * Pone la app en primer plano en modo pantalla dividida (split screen).
+     * Usa la acción global de accesibilidad equivalente al gesto de
+     * "mantener pulsado el botón de Recientes" / arrastrar una app arriba.
+     *
+     * Limitación de Android: una app normal (sin permisos de sistema) no
+     * puede elegir programáticamente las DOS apps del split screen; esta
+     * acción solo pone la app actual en modo dividido y, según el
+     * fabricante/versión, puede abrir la bandeja de Recientes para que el
+     * propio usuario toque la segunda app. Aun así es el paso que automatiza
+     * todo lo que se puede automatizar sin root.
+     */
+    fun activarSplitScreen(): Boolean {
+        return performGlobalAction(GLOBAL_ACTION_TOGGLE_SPLIT_SCREEN)
+    }
+
     /** Desplaza hacia delante el elemento desplazable que tenga el foco. */
     fun scrollForward() {
         val node = rootInActiveWindow ?: return
